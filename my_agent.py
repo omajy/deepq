@@ -4,11 +4,9 @@ from pytorch_mlp import MLPRegression
 import argparse
 from console import FlappyBirdEnv
 from collections import deque
-import torch
 
 STUDENT_ID = 'a1850943'
 DEGREE = 'UG'
-
 
 class MyAgent:
     def __init__(self, show_screen=False, load_model_path=None, mode=None):
@@ -98,30 +96,55 @@ class MyAgent:
         net_to_update.load_state_dict(net_as_source.state_dict())
 
     def build_state(self, state: dict):
-        normalised_distance = state['bird_x']/state['screen_width']
-        normalised_height = state['bird_y']/state['screen_height']
-        
+        bird_y = state['bird_y']
+        bird_velocity = state['bird_velocity']
+        screen_height = state['screen_height']
+        screen_width = state['screen_width']
         pipes = state['pipes']
+
         if pipes:
-            pipe = pipes[0]  
-            pipe_x = pipe['x']
-            pipe_top = pipe['top']
-            pipe_bottom = pipe['bottom']
-            gap_center = (pipe_top + pipe_bottom) / 2
+            next_pipe = pipes[0]
+            pipe_x = next_pipe['x']
+            pipe_top = next_pipe['top']
+            pipe_bottom = next_pipe['bottom']
+            gap = state['pipe_attributes']['gap']
+            gap_center = pipe_top + (gap / 2)
         else:
-            pipe_x = state['screen_width']
-            gap_center = state['screen_height']/2
+            pipe_x = screen_width
+            gap_center = screen_height / 2
+        
+        normalized_bird_height = bird_y / screen_height
+        
+        normalized_velocity = bird_velocity / 10  
+        
+        normalized_distance_to_pipe = (pipe_x - state['bird_x']) / screen_width
+        
+        normalized_distance_to_gap = (gap_center - bird_y) / screen_height
+        
+        return np.array([normalized_bird_height, normalized_velocity, 
+                        normalized_distance_to_pipe, normalized_distance_to_gap])
+    
+    def reward(self, state: dict):
+        done = state['done']
+        done_type = state['done_type']
+        score = state['score']
+        mileage = state['mileage']
 
-        normalised_distance_to_pipe = (pipe_x - state['bird_x'])/state['screen_width']
-        normalised_distance_to_gap_centre = (gap_center - state['bird_y'])/state['screen_height']
+        if done:
+            if done_type == 'hit_pipe':
+                return -100
+            elif done_type == 'offscreen':
+                return -100
+            elif done_type == 'well_done':
+                return 100
+            
+        reward = 0.1
 
-        states_tensor = torch.tensor([
-            normalised_distance,
-            normalised_height, 
-            normalised_distance_to_pipe,
-            normalised_distance_to_gap_centre
-        ])
-        return states_tensor
+        if score > 0:
+            reward+=1
+
+        reward += mileage * 0.01
+        return reward
 
 if __name__ == '__main__':
 
