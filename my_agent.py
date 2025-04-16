@@ -4,9 +4,10 @@ from pytorch_mlp import MLPRegression
 import argparse
 from console import FlappyBirdEnv
 from collections import deque
+import torch
 
 STUDENT_ID = 'a1850943'
-DEGREE = 'UG'  # or 'PG' 
+DEGREE = 'UG'
 
 
 class MyAgent:
@@ -96,6 +97,31 @@ class MyAgent:
         """
         net_to_update.load_state_dict(net_as_source.state_dict())
 
+    def build_state(self, state: dict):
+        normalised_distance = state['bird_x']/state['screen_width']
+        normalised_height = state['bird_y']/state['screen_height']
+        
+        pipes = state['pipes']
+        if pipes:
+            pipe = pipes[0]  
+            pipe_x = pipe['x']
+            pipe_top = pipe['top']
+            pipe_bottom = pipe['bottom']
+            gap_center = (pipe_top + pipe_bottom) / 2
+        else:
+            pipe_x = state['screen_width']
+            gap_center = state['screen_height']/2
+
+        normalised_distance_to_pipe = (pipe_x - state['bird_x'])/state['screen_width']
+        normalised_distance_to_gap_centre = (gap_center - state['bird_y'])/state['screen_height']
+
+        states_tensor = torch.tensor([
+            normalised_distance,
+            normalised_height, 
+            normalised_distance_to_pipe,
+            normalised_distance_to_gap_centre
+        ])
+        return states_tensor
 
 if __name__ == '__main__':
 
