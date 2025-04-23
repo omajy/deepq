@@ -1,9 +1,11 @@
 import numpy as np
 import pygame
+import random
 from pytorch_mlp import MLPRegression
 import argparse
 from console import FlappyBirdEnv
 from collections import deque
+import torch
 
 STUDENT_ID = 'a1850943'
 DEGREE = 'UG'
@@ -44,8 +46,23 @@ class MyAgent:
             action: the action code as specified by the action_table
         """
         # following pseudocode to implement this function
-        a_t = ...
 
+        state_vector = self.build_state(state)
+        state_tensor = torch.tensor(state_vector, dtype=torch.float32).unsqueeze(0)
+
+
+        if self.mode == 'train':
+            if random.random() < self.epsilon:
+                a_t = np.random.choice([action_table['jump'], action_table['do_nothing']])
+            else:
+                q_values = self.network(state_tensor)
+                a_t = torch.argmax(q_values).item()
+
+        elif self.mode == 'eval':
+            # q_values = self.network(torch.from_numpy(state_vector))
+            # a_t = np.argmax(q_values)
+            a_t = 0
+        
         return a_t
 
     def receive_after_action_observation(self, state: dict, action_table: dict) -> None:
@@ -58,6 +75,17 @@ class MyAgent:
             None
         """
         # following pseudocode to implement this function
+
+        if self.mode == 'train':
+            next_state_vector = self.build_state(state)
+            reward = self.reward(state)
+            if (state['done']):
+                a_t_next = 0
+            else:
+                q_next = self.network(torch.from_numpy(next_state_vector))
+                a_t_next = np.argmax(q_next)
+
+            self.storage.append(reward, a_t_next)
 
     def save_model(self, path: str = 'my_model.ckpt'):
         """
