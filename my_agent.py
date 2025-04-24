@@ -82,10 +82,11 @@ class MyAgent:
             if (state['done']):
                 a_t_next = 0
             else:
-                q_next = self.network(torch.from_numpy(next_state_vector))
-                a_t_next = np.argmax(q_next)
+                next_state_tensor = torch.from_numpy(next_state_vector).float().unsqueeze(0)
+                q_next = self.network(next_state_tensor)
+                a_t_next = np.argmax(q_next.detach().numpy())
 
-            self.storage.append(reward, a_t_next)
+            self.storage.append((reward, a_t_next))
 
     def save_model(self, path: str = 'my_model.ckpt'):
         """
@@ -150,7 +151,7 @@ class MyAgent:
         normalized_distance_to_gap = (gap_center - bird_y) / screen_height
         
         return np.array([normalized_bird_height, normalized_velocity, 
-                        normalized_distance_to_pipe, normalized_distance_to_gap])
+                        normalized_distance_to_pipe, normalized_distance_to_gap],  dtype=np.float32)
     
     def reward(self, state: dict):
         done = state['done']
