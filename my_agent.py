@@ -31,7 +31,7 @@ class MyAgent:
         self.epsilon = 0.1  # probability ε in Algorithm 2
         self.n = 32  # the number of samples you'd want to draw from the storage each time
         self.discount_factor = 0.99  # γ in Algorithm 2
-
+ 
         # do not modify this
         if load_model_path:
             self.load_model(load_model_path)
@@ -50,7 +50,6 @@ class MyAgent:
         state_vector = self.build_state(state)
         state_tensor = torch.tensor(state_vector, dtype=torch.float32).unsqueeze(0)
 
-
         if self.mode == 'train':
             if random.random() < self.epsilon:
                 a_t = np.random.choice([action_table['jump'], action_table['do_nothing']])
@@ -59,9 +58,8 @@ class MyAgent:
                 a_t = torch.argmax(q_values).item()
 
         elif self.mode == 'eval':
-            # q_values = self.network(torch.from_numpy(state_vector))
-            # a_t = np.argmax(q_values)
-            a_t = 0
+            q_values = self.network(state_tensor)
+            a_t = torch.argmax(q_values).item()
         
         return a_t
 
@@ -89,26 +87,9 @@ class MyAgent:
             self.storage.append((reward, a_t_next))
 
     def save_model(self, path: str = 'my_model.ckpt'):
-        """
-        Save the MLP model. Unless you decide to implement the MLP model yourself, do not modify this function.
-
-        Args:
-            path: the full path to save the model weights, ending with the file name and extension
-
-        Returns:
-
-        """
         self.network.save_model(path=path)
 
     def load_model(self, path: str = 'my_model.ckpt'):
-        """
-        Load the MLP model weights.  Unless you decide to implement the MLP model yourself, do not modify this function.
-        Args:
-            path: the full path to load the model weights, ending with the file name and extension
-
-        Returns:
-
-        """
         self.network.load_model(path=path)
 
     @staticmethod
@@ -163,7 +144,7 @@ class MyAgent:
             if done_type == 'hit_pipe':
                 return -100
             elif done_type == 'offscreen':
-                return -100
+                return -50
             elif done_type == 'well_done':
                 return 100
             
