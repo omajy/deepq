@@ -117,11 +117,12 @@ class MyAgent:
             else:
                 one_hot_action[1] = 1
 
-    #   need something here
+            target_q_value = reward_received + self.discount_factor * next_state_q_value
 
-        states_tensor = torch.tensor(states_before_action, dtype=torch.float32)
-        target_q_values_tensor = torch.tensor(target_q_values, dtype=torch.float32)
-        one_hot_actions_tensor = torch.tensor(one_hot_actions, dtype=torch.float32)
+            states_before_action.append(state_before)
+            target_q_values.append(target_q_value)
+            one_hot_actions.append(one_hot_action)
+    #    this where we up to
 
         # self.network.fit(states_tensor, target_q_values_tensor, sample_weight=one_hot_actions_tensor)
 
