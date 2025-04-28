@@ -31,6 +31,9 @@ class MyAgent:
         self.epsilon = 0.1  # probability ε in Algorithm 2
         self.n = 32  # the number of samples you'd want to draw from the storage each time
         self.discount_factor = 0.99  # γ in Algorithm 2
+
+        self.state_vector_before_action = None
+        self.action_before_action = None
  
         # do not modify this
         if load_model_path:
@@ -52,16 +55,21 @@ class MyAgent:
 
         if self.mode == 'train':
             if random.random() < self.epsilon:
-                a_t = np.random.choice([action_table['jump'], action_table['do_nothing']])
+                action = np.random.choice([0, 1])
             else:
                 q_values = self.network(state_tensor)
-                a_t = torch.argmax(q_values).item()
+                action = torch.argmax(q_values).item()
 
         elif self.mode == 'eval':
             q_values = self.network(state_tensor)
-            a_t = torch.argmax(q_values).item()
+            action = torch.argmax(q_values).item()
+
+        if action == 0:
+            action = action_table['jump']
+        else:
+            action = action_table['do_nothing']
         
-        return a_t
+        return action
 
     def receive_after_action_observation(self, state: dict, action_table: dict) -> None:
         """
@@ -77,14 +85,51 @@ class MyAgent:
         if self.mode == 'train':
             next_state_vector = self.build_state(state)
             reward = self.reward(state)
+            q_next = None
             if (state['done']):
-                a_t_next = 0
+                next_state_q_value = 0
             else:
                 next_state_tensor = torch.from_numpy(next_state_vector).float().unsqueeze(0)
                 q_next = self.network(next_state_tensor)
-                a_t_next = np.argmax(q_next.detach().numpy())
+                next_state_q_value = torch.argmax(q_next).item()
 
-            self.storage.append((reward, a_t_next))
+            self.storage.append((
+                self.state_vector_before_action,  
+                self.action_before_action,        
+                next_state_vector,                
+                reward,                           
+                state['done']                    
+            ))
+        
+        if len(self.storage) < self.n:
+            minibatch = self.storage  
+        else:
+            minibatch = random.sample(self.storage, self.n)
+
+        states_before_action, target_q_values, one_hot_actions = [], [], []
+
+        for transition in minibatch:
+            state_before, action_taken, next_state, reward_received, game_over = transition
+
+            one_hot_action = np.zeros(2)
+            if action_taken == action_table['jump']:
+                one_hot_action[0] = 1
+            else:
+                one_hot_action[1] = 1
+
+    #   need something here
+
+        states_tensor = torch.tensor(states_before_action, dtype=torch.float32)
+        target_q_values_tensor = torch.tensor(target_q_values, dtype=torch.float32)
+        one_hot_actions_tensor = torch.tensor(one_hot_actions, dtype=torch.float32)
+
+        # self.network.fit(states_tensor, target_q_values_tensor, sample_weight=one_hot_actions_tensor)
+
+        self.state_vector_before_action = next_state_vector
+        if q_next is not None:
+            self.action_before_action = np.argmax(q_next.detach().numpy())
+        else:
+            self.action_before_action = None
 
     def save_model(self, path: str = 'my_model.ckpt'):
         self.network.save_model(path=path)
@@ -179,10 +224,11 @@ if __name__ == '__main__':
         agent.save_model(path='my_model.ckpt')
 
         # you'd want to clear the memory after one or a few episodes
-        ...
-
+        if episode % 10 == 0:
+            agent.storage.clear()
         # you'd want to update the fixed Q-target network (Q_f) with Q's model parameter after one or a few episodes
-        ...
+        if episode % 100 == 0:
+            agent.update_network_model(agent.network2, agent.network)
 
     # the below resembles how we evaluate your agent
     env2 = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level)
