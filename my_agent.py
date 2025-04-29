@@ -29,6 +29,8 @@ class MyAgent:
         MyAgent.update_network_model(net_to_update=self.network2, net_as_source=self.network)
 
         self.epsilon = 1  # probability ε in Algorithm 2
+        self.min_epsilon = 0.01
+        self.epsilon_decay = 0.999
         self.n = 32  # the number of samples you'd want to draw from the storage each time
         self.discount_factor = 0.99  # γ in Algorithm 2
 
@@ -70,8 +72,7 @@ class MyAgent:
             action = action_table['do_nothing']
         
         if self.mode == 'train':
-            epsilon_decay = 0.999
-            self.epsilon *= epsilon_decay
+            self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
         
         return action
 
@@ -190,18 +191,16 @@ class MyAgent:
 
         if done:
             if done_type == 'hit_pipe':
-                return -50
+                return -100
             elif done_type == 'offscreen':
                 return -100
             elif done_type == 'well_done':
                 return 100
             
         reward = 0.1
+        reward += mileage*0.1
+        reward += score*5
 
-        if score > 0:
-            reward+=1
-
-        reward += mileage * 0.1
         return reward
 
 if __name__ == '__main__':
@@ -216,6 +215,9 @@ if __name__ == '__main__':
     agent = MyAgent(show_screen=False)
     episodes = 10000
 
+    total_score = 0
+    episode_count = 0
+
     for episode in range(episodes):
         env.play(player=agent)
 
@@ -223,21 +225,34 @@ if __name__ == '__main__':
         # env.score has the score value from the last play
         # env.mileage has the mileage value from the last play
         print(env.score)
-        print(env.mileage)
+        # print(env.mileage)
         
+        # JUST A LOOP TO EVAL TRAINING
+        total_score += env.score 
+        episode_count += 1 
+        
+        avg_score = total_score / episode_count
+        print(f"average score: {avg_score:.2f}")
+
+        if episode % 100 == 0 and episode != 0:  
+            total_score = 0  
+            episode_count = 0  
+
+        # JUST A LOOP TO EVAL TRAINING
+            
         # store the best model based on your judgement
-        agent.save_model(path='my_model.ckpt')
+        agent.save_model(path='my_model4.ckpt')
 
         # you'd want to clear the memory after one or a few episodes
-        if episode % 100 == 0:
+        if episode % 5000 == 0:
             agent.storage.clear()
         # you'd want to update the fixed Q-target network (Q_f) with Q's model parameter after one or a few episodes
-        if episode % 1000 == 0:
+        if episode % 500 == 0:
             agent.update_network_model(agent.network2, agent.network)
 
     # the below resembles how we evaluate your agent
     env2 = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level)
-    agent2 = MyAgent(show_screen=False, load_model_path='my_model.ckpt', mode='eval')
+    agent2 = MyAgent(show_screen=False, load_model_path='my_model4.ckpt', mode='eval')
 
     episodes = 10
     scores = list()
