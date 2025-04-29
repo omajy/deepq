@@ -226,7 +226,7 @@ if __name__ == '__main__':
         print(env.mileage)
         
         # store the best model based on your judgement
-        agent.save_model(path='best_model.ckpt')
+        agent.save_model(path='my_model.ckpt')
 
         # you'd want to clear the memory after one or a few episodes
         if episode % 100 == 0:

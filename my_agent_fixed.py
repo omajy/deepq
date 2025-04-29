@@ -203,7 +203,7 @@ if __name__ == '__main__':
         agent.save_model(path='best_model_fixed.ckpt')
 
     env2 = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level)
-    agent2 = MyAgent(show_screen=False, load_model_path='my_model.ckpt', mode='eval')
+    agent2 = MyAgent(show_screen=False, load_model_path='best_model_fixed.ckpt', mode='eval')
 
     episodes = 10
     scores = list()
