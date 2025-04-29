@@ -28,7 +28,7 @@ class MyAgent:
         # initialise Q_f's parameter by Q's, here is an example
         MyAgent.update_network_model(net_to_update=self.network2, net_as_source=self.network)
 
-        self.epsilon = 0.1  # probability ε in Algorithm 2
+        self.epsilon = 1  # probability ε in Algorithm 2
         self.n = 32  # the number of samples you'd want to draw from the storage each time
         self.discount_factor = 0.99  # γ in Algorithm 2
 
@@ -69,6 +69,10 @@ class MyAgent:
         else:
             action = action_table['do_nothing']
         
+        if self.mode == 'train':
+            epsilon_decay = 0.999
+            self.epsilon *= epsilon_decay
+        
         return action
 
     def receive_after_action_observation(self, state: dict, action_table: dict) -> None:
@@ -81,6 +85,8 @@ class MyAgent:
             None
         """
         # following pseudocode to implement this function
+        next_state_vector = None
+        q_next = None
 
         if self.mode == 'train':
             next_state_vector = self.build_state(state)
@@ -91,7 +97,7 @@ class MyAgent:
             else:
                 next_state_tensor = torch.from_numpy(next_state_vector).float().unsqueeze(0)
                 q_next = self.network(next_state_tensor)
-                next_state_q_value = torch.argmax(q_next).item()
+                next_state_q_value = torch.max(q_next).item()
 
             self.storage.append((
                 self.state_vector_before_action,  
@@ -101,30 +107,26 @@ class MyAgent:
                 state['done']                    
             ))
         
-        if len(self.storage) < self.n:
-            minibatch = self.storage  
-        else:
+        if len(self.storage) >= self.n:
             minibatch = random.sample(self.storage, self.n)
 
-        states_before_action, target_q_values, one_hot_actions = [], [], []
+            X = np.array([np.array(state_before).flatten() for state_before, action_taken, next_state, reward_received, game_over in minibatch], dtype=np.float32)
+            Y = self.network.predict(X) 
+            W = np.zeros_like(Y) 
 
-        for transition in minibatch:
-            state_before, action_taken, next_state, reward_received, game_over = transition
+            for idx, (state_before, action_taken, next_state, reward_received, game_over) in enumerate(minibatch):
+                if game_over:
+                    Y[idx, action_taken] = reward_received  
+                else:
+                    next_state_tensor = torch.from_numpy(next_state).float().unsqueeze(0)
+                    q_values_next = self.network2(next_state_tensor)
+                    next_state_q_value = torch.max(q_values_next).item()
+                    target_q_value = reward_received + self.discount_factor * next_state_q_value
+                    Y[idx, action_taken] = target_q_value
 
-            one_hot_action = np.zeros(2)
-            if action_taken == action_table['jump']:
-                one_hot_action[0] = 1
-            else:
-                one_hot_action[1] = 1
+                W[idx, action_taken] = 1.0  
 
-            target_q_value = reward_received + self.discount_factor * next_state_q_value
-
-            states_before_action.append(state_before)
-            target_q_values.append(target_q_value)
-            one_hot_actions.append(one_hot_action)
-    #    this where we up to
-
-        # self.network.fit(states_tensor, target_q_values_tensor, sample_weight=one_hot_actions_tensor)
+            self.network.fit_step(X, Y, W)
 
         self.state_vector_before_action = next_state_vector
         if q_next is not None:
@@ -188,9 +190,9 @@ class MyAgent:
 
         if done:
             if done_type == 'hit_pipe':
-                return -100
-            elif done_type == 'offscreen':
                 return -50
+            elif done_type == 'offscreen':
+                return -100
             elif done_type == 'well_done':
                 return 100
             
@@ -199,7 +201,7 @@ class MyAgent:
         if score > 0:
             reward+=1
 
-        reward += mileage * 0.01
+        reward += mileage * 0.1
         return reward
 
 if __name__ == '__main__':
@@ -210,25 +212,27 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # bare-bone code to train your agent (you may extend this part as well, we won't run your agent training code)
-    env = FlappyBirdEnv(config_file_path='config.yml', show_screen=True, level=args.level, game_length=10)
-    agent = MyAgent(show_screen=True)
+    env = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level, game_length=10)
+    agent = MyAgent(show_screen=False)
     episodes = 10000
+
     for episode in range(episodes):
         env.play(player=agent)
 
+        print("episode number", episode+1)
         # env.score has the score value from the last play
         # env.mileage has the mileage value from the last play
         print(env.score)
         print(env.mileage)
-
+        
         # store the best model based on your judgement
-        agent.save_model(path='my_model.ckpt')
+        agent.save_model(path='best_model.ckpt')
 
         # you'd want to clear the memory after one or a few episodes
-        if episode % 10 == 0:
+        if episode % 100 == 0:
             agent.storage.clear()
         # you'd want to update the fixed Q-target network (Q_f) with Q's model parameter after one or a few episodes
-        if episode % 100 == 0:
+        if episode % 1000 == 0:
             agent.update_network_model(agent.network2, agent.network)
 
     # the below resembles how we evaluate your agent
@@ -241,5 +245,6 @@ if __name__ == '__main__':
         env2.play(player=agent2)
         scores.append(env2.score)
 
+    print('mine average score', np.mean(scores))
     print(np.max(scores))
     print(np.mean(scores))
