@@ -213,7 +213,7 @@ if __name__ == '__main__':
     # bare-bone code to train your agent (you may extend this part as well, we won't run your agent training code)
     env = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level, game_length=10)
     agent = MyAgent(show_screen=False)
-    episodes = 10000
+    episodes = 20000
 
     total_score = 0
     episode_count = 0
