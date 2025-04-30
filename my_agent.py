@@ -233,7 +233,6 @@ if __name__ == '__main__':
         
         avg_score = total_score / episode_count
         print(f"average score: {avg_score:.2f}")
-        print("epsilon",agent.epsilon)
 
         if episode % 100 == 0 and episode != 0:  
             total_score = 0  
@@ -242,7 +241,7 @@ if __name__ == '__main__':
         # JUST A LOOP TO EVAL TRAINING
             
         # store the best model based on your judgement
-        agent.save_model(path='my_model6-2.ckpt')
+        agent.save_model(path='my_model6-best.ckpt')
 
         # you'd want to clear the memory after one or a few episodes
         if episode % 5000 == 0:
@@ -253,7 +252,7 @@ if __name__ == '__main__':
 
     # the below resembles how we evaluate your agent
     env2 = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level)
-    agent2 = MyAgent(show_screen=False, load_model_path='my_model6-2.ckpt', mode='eval')
+    agent2 = MyAgent(show_screen=False, load_model_path='my_model6-best.ckpt', mode='eval')
 
     episodes = 10
     scores = list()
