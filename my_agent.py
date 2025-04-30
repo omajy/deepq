@@ -198,7 +198,7 @@ class MyAgent:
                 return 100
             
         reward = 0.1
-        reward += mileage*0.1
+        reward += mileage*0.2
         reward += score*5
 
         return reward
@@ -213,7 +213,7 @@ if __name__ == '__main__':
     # bare-bone code to train your agent (you may extend this part as well, we won't run your agent training code)
     env = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level, game_length=10)
     agent = MyAgent(show_screen=False)
-    episodes = 20000
+    episodes = 30000
 
     total_score = 0
     episode_count = 0
@@ -233,6 +233,7 @@ if __name__ == '__main__':
         
         avg_score = total_score / episode_count
         print(f"average score: {avg_score:.2f}")
+        print("epsilon",agent.epsilon)
 
         if episode % 100 == 0 and episode != 0:  
             total_score = 0  
@@ -241,18 +242,18 @@ if __name__ == '__main__':
         # JUST A LOOP TO EVAL TRAINING
             
         # store the best model based on your judgement
-        agent.save_model(path='my_model4.ckpt')
+        agent.save_model(path='my_model6-2.ckpt')
 
         # you'd want to clear the memory after one or a few episodes
         if episode % 5000 == 0:
             agent.storage.clear()
         # you'd want to update the fixed Q-target network (Q_f) with Q's model parameter after one or a few episodes
-        if episode % 500 == 0:
+        if episode % 200 == 0:
             agent.update_network_model(agent.network2, agent.network)
 
     # the below resembles how we evaluate your agent
     env2 = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level)
-    agent2 = MyAgent(show_screen=False, load_model_path='my_model4.ckpt', mode='eval')
+    agent2 = MyAgent(show_screen=False, load_model_path='my_model6-2.ckpt', mode='eval')
 
     episodes = 10
     scores = list()
