@@ -20,22 +20,24 @@ class MyAgent:
             self.mode = mode
 
         # modify these
-        self.storage = deque(maxlen=10000)  # a data structure of your choice (D in the Algorithm 2)
+        self.storage = deque(maxlen=20000)  # increased memory size for better learning
         # A neural network MLP model which can be used as Q
-        self.network = MLPRegression(input_dim=4, output_dim=2, learning_rate=1e-3)
+        self.network = MLPRegression(input_dim=9, output_dim=2, learning_rate=5e-4)  # adjusted input dimensions to include jump history
         # network2 has identical structure to network1, network2 is the Q_f
-        self.network2 = MLPRegression(input_dim=4, output_dim=2, learning_rate=1e-3)
+        self.network2 = MLPRegression(input_dim=9, output_dim=2, learning_rate=5e-4)
         # initialise Q_f's parameter by Q's, here is an example
         MyAgent.update_network_model(net_to_update=self.network2, net_as_source=self.network)
 
-        self.epsilon = 1  # probability ε in Algorithm 2
-        self.min_epsilon = 0.01
-        self.epsilon_decay = 0.999
-        self.n = 32  # the number of samples you'd want to draw from the storage each time
+        self.epsilon = 1.0  # start with high exploration
+        self.min_epsilon = 0.01  # higher minimum exploration
+        self.epsilon_decay = 0.9997  # slower decay for better exploration
+        self.n = 64  # increased batch size for more stable learning
         self.discount_factor = 0.99  # γ in Algorithm 2
 
         self.state_vector_before_action = None
         self.action_before_action = None
+        self.last_pipe_passed = 0  # track when we pass pipes for reward
+        self.last_action_was_jump = 0  # track consecutive jumps to prevent flying straight up
  
         # do not modify this
         if load_model_path:
@@ -50,29 +52,37 @@ class MyAgent:
         Returns:
             action: the action code as specified by the action_table
         """
-        # following pseudocode to implement this function
-
+        # Get current state vector
         state_vector = self.build_state(state)
         state_tensor = torch.tensor(state_vector, dtype=torch.float32).unsqueeze(0)
 
-        if self.mode == 'train':
-            if random.random() < self.epsilon:
-                action = np.random.choice([0, 1])
-            else:
+        # Store the state for training
+        self.state_vector_before_action = state_vector
+
+        # In eval mode, prevent consecutive jumps to avoid flying straight up
+        if self.mode == 'eval' and self.last_action_was_jump > 0 and state['bird_velocity'] < -5:
+            action_idx = 1  # Force do_nothing if bird is already moving up fast
+        else:
+            if self.mode == 'train':
+                # Epsilon-greedy action selection
+                if random.random() < self.epsilon:
+                    action_idx = np.random.choice([0, 1])
+                else:
+                    q_values = self.network(state_tensor)
+                    action_idx = torch.argmax(q_values).item()
+            else:  # eval mode
                 q_values = self.network(state_tensor)
-                action = torch.argmax(q_values).item()
+                action_idx = torch.argmax(q_values).item()
 
-        elif self.mode == 'eval':
-            q_values = self.network(state_tensor)
-            action = torch.argmax(q_values).item()
+        self.action_before_action = action_idx
 
-        if action == 0:
+        # Map to game action and update last_action_was_jump
+        if action_idx == 0:
             action = action_table['jump']
+            self.last_action_was_jump = 2  # Track 2 frames of jumping
         else:
             action = action_table['do_nothing']
-        
-        if self.mode == 'train':
-            self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
+            self.last_action_was_jump = max(0, self.last_action_was_jump - 1)  # Decrease the counter
         
         return action
 
@@ -85,55 +95,62 @@ class MyAgent:
         Returns:
             None
         """
-        # following pseudocode to implement this function
-        next_state_vector = None
-        q_next = None
+        if self.mode != 'train' or self.state_vector_before_action is None:
+            return
 
-        if self.mode == 'train':
-            next_state_vector = self.build_state(state)
-            reward = self.reward(state)
-            q_next = None
-            if (state['done']):
-                next_state_q_value = 0
-            else:
-                next_state_tensor = torch.from_numpy(next_state_vector).float().unsqueeze(0)
-                q_next = self.network(next_state_tensor)
-                next_state_q_value = torch.max(q_next).item()
-
-            self.storage.append((
-                self.state_vector_before_action,  
-                self.action_before_action,        
-                next_state_vector,                
-                reward,                           
-                state['done']                    
-            ))
+        # Calculate reward for this state transition
+        reward = self.reward(state)
         
+        # Get next state representation
+        next_state_vector = self.build_state(state)
+        
+        # Add experience to replay buffer
+        self.storage.append((
+            self.state_vector_before_action,
+            self.action_before_action,
+            next_state_vector,
+            reward,
+            state['done']
+        ))
+        
+        # Only train if we have enough samples
         if len(self.storage) >= self.n:
+            # Sample mini-batch from replay buffer
             minibatch = random.sample(self.storage, self.n)
-
-            X = np.array([np.array(state_before).flatten() for state_before, action_taken, next_state, reward_received, game_over in minibatch], dtype=np.float32)
-            Y = self.network.predict(X) 
-            W = np.zeros_like(Y) 
-
-            for idx, (state_before, action_taken, next_state, reward_received, game_over) in enumerate(minibatch):
-                if game_over:
-                    Y[idx, action_taken] = reward_received  
+            
+            # Extract data for training
+            states = np.array([data[0] for data in minibatch], dtype=np.float32)
+            actions = np.array([data[1] for data in minibatch])
+            next_states = np.array([data[2] for data in minibatch], dtype=np.float32)
+            rewards = np.array([data[3] for data in minibatch])
+            dones = np.array([data[4] for data in minibatch])
+            
+            # Current Q-values for all state-action pairs in batch
+            current_q_values = self.network.predict(states)
+            
+            # Use target network to compute next state Q-values
+            next_states_tensor = torch.tensor(next_states, dtype=torch.float32)
+            next_q_values = self.network2(next_states_tensor).detach().numpy()
+            
+            # Compute target Q-values
+            targets = np.copy(current_q_values)
+            for i in range(self.n):
+                if dones[i]:
+                    targets[i, actions[i]] = rewards[i]
                 else:
-                    next_state_tensor = torch.from_numpy(next_state).float().unsqueeze(0)
-                    q_values_next = self.network2(next_state_tensor)
-                    next_state_q_value = torch.max(q_values_next).item()
-                    target_q_value = reward_received + self.discount_factor * next_state_q_value
-                    Y[idx, action_taken] = target_q_value
-
-                W[idx, action_taken] = 1.0  
-
-            self.network.fit_step(X, Y, W)
-
-        self.state_vector_before_action = next_state_vector
-        if q_next is not None:
-            self.action_before_action = np.argmax(q_next.detach().numpy())
-        else:
-            self.action_before_action = None
+                    targets[i, actions[i]] = rewards[i] + self.discount_factor * np.max(next_q_values[i])
+            
+            # Create weights (1 for chosen actions, 0 for others)
+            weights = np.zeros_like(targets)
+            for i in range(self.n):
+                weights[i, actions[i]] = 1.0
+            
+            # Update network
+            self.network.fit_step(states, targets, weights)
+        
+        # Decay epsilon
+        if self.epsilon > self.min_epsilon:
+            self.epsilon *= self.epsilon_decay
 
     def save_model(self, path: str = 'my_model.ckpt'):
         self.network.save_model(path=path)
@@ -155,111 +172,193 @@ class MyAgent:
         net_to_update.load_state_dict(net_as_source.state_dict())
 
     def build_state(self, state: dict):
+        """Enhanced state representation with more relevant features"""
         bird_y = state['bird_y']
         bird_velocity = state['bird_velocity']
         screen_height = state['screen_height']
         screen_width = state['screen_width']
         pipes = state['pipes']
 
+        # Default values if no pipes exist
+        pipe_x = screen_width
+        pipe_top = 0
+        pipe_bottom = screen_height
+        gap_center = screen_height / 2
+        next_pipe_x = screen_width * 1.5
+        next_pipe_gap_center = screen_height / 2
+
+        # Get information about the next pipe
         if pipes:
             next_pipe = pipes[0]
             pipe_x = next_pipe['x']
             pipe_top = next_pipe['top']
             pipe_bottom = next_pipe['bottom']
-            gap = state['pipe_attributes']['gap']
+            gap = pipe_bottom - pipe_top
             gap_center = pipe_top + (gap / 2)
-        else:
-            pipe_x = screen_width
-            gap_center = screen_height / 2
-        
+            
+            # Get information about the second pipe if it exists
+            if len(pipes) > 1:
+                next_next_pipe = pipes[1]
+                next_pipe_x = next_next_pipe['x']
+                next_pipe_top = next_next_pipe['top']
+                next_pipe_bottom = next_next_pipe['bottom']
+                next_pipe_gap = next_pipe_bottom - next_pipe_top
+                next_pipe_gap_center = next_pipe_top + (next_pipe_gap / 2)
+
+        # Normalize values for better learning
         normalized_bird_height = bird_y / screen_height
-        
-        normalized_velocity = bird_velocity / 10  
-        
+        normalized_velocity = bird_velocity / 10
+        normalized_pipe_top = pipe_top / screen_height
+        normalized_pipe_bottom = pipe_bottom / screen_height
         normalized_distance_to_pipe = (pipe_x - state['bird_x']) / screen_width
+        normalized_distance_to_gap = (bird_y - gap_center) / screen_height
+        normalized_next_pipe_x = (next_pipe_x - state['bird_x']) / screen_width
+        normalized_next_pipe_gap = (bird_y - next_pipe_gap_center) / screen_height
         
-        normalized_distance_to_gap = (gap_center - bird_y) / screen_height
-        
-        return np.array([normalized_bird_height, normalized_velocity, 
-                        normalized_distance_to_pipe, normalized_distance_to_gap],  dtype=np.float32)
-    
+        # Add the last jump action as a feature to prevent consecutive jumps
+        normalized_last_jump = self.last_action_was_jump / 2.0  # Normalize to [0,1]
+
+        return np.array([
+            normalized_bird_height,
+            normalized_velocity,
+            normalized_pipe_top,
+            normalized_pipe_bottom,
+            normalized_distance_to_pipe,
+            normalized_distance_to_gap,
+            normalized_next_pipe_x,
+            normalized_next_pipe_gap,
+            normalized_last_jump
+        ], dtype=np.float32)
+
     def reward(self, state: dict):
+        """Improved reward function that better guides the agent"""
         done = state['done']
         done_type = state['done_type']
         score = state['score']
-        mileage = state['mileage']
-
+        bird_y = state['bird_y']
+        bird_velocity = state['bird_velocity']
+        screen_height = state['screen_height']
+        
+        reward = 0.1  # Small positive reward for staying alive
+        
+        # Check if we passed a pipe
+        if score > self.last_pipe_passed:
+            reward += 1.5  # Big reward for passing pipes
+            self.last_pipe_passed = score
+        
+        # Strongly penalize staying too close to the screen edges
+        normalized_y = bird_y / screen_height
+        if normalized_y < 0.05:
+            reward -= 1.0  # Severe penalty for being very close to top
+        elif normalized_y > 0.95:
+            reward -= 1.0  # Severe penalty for being very close to bottom
+        elif normalized_y < 0.1 or normalized_y > 0.9:
+            reward -= 0.3  # Smaller penalty for being somewhat close to edges
+        
+        # Heavily penalize extreme velocities (prevents flying straight up)
+        if bird_velocity < -10:  # Flying up too fast
+            reward -= 0.8
+        elif bird_velocity > 8:  # Falling too fast
+            reward -= 0.5
+            
+        # Check if the bird is flying toward the pipe gap
+        if state['pipes']:
+            next_pipe = state['pipes'][0]
+            pipe_gap_center = next_pipe['top'] + (next_pipe['bottom'] - next_pipe['top']) / 2
+            distance_to_gap = abs(bird_y - pipe_gap_center) / screen_height
+            
+            # Reward for being aligned with the gap
+            if distance_to_gap < 0.1:
+                reward += 0.3
+            elif distance_to_gap < 0.2:
+                reward += 0.1
+                
+            # Additional reward for being in the optimal position before the gap
+            # This encourages stable flight patterns
+            if 0.4 < normalized_y < 0.6 and next_pipe['x'] > state['bird_x']:
+                reward += 0.1
+                
+        # Terminal state rewards/penalties
         if done:
             if done_type == 'hit_pipe':
-                return -100
+                return -1.5  # Stronger penalty
             elif done_type == 'offscreen':
-                return -100
+                return -3.0  # Much stronger penalty for flying offscreen
             elif done_type == 'well_done':
-                return 100
-            
-        reward = 0.1
-        reward += mileage*0.2
-        reward += score*5
-
+                return 5.0
+                
         return reward
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--level', type=int, default=1)
+    parser.add_argument('--mode', type=str, default='train')
+    parser.add_argument('--episodes', type=int, default=20000)
 
     args = parser.parse_args()
 
-    # bare-bone code to train your agent (you may extend this part as well, we won't run your agent training code)
-    env = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level, game_length=10)
-    agent = MyAgent(show_screen=False)
-    episodes = 30000
+    if args.mode == 'train':
+        # Training code
+        env = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level, game_length=10)
+        agent = MyAgent(show_screen=False)
+        episodes = args.episodes
 
-    total_score = 0
-    episode_count = 0
+        total_score = 0
+        episode_count = 0
+        best_average = 0
+        last_10_scores = deque(maxlen=10)
 
-    for episode in range(episodes):
-        env.play(player=agent)
-
-        print("episode number", episode+1)
-        # env.score has the score value from the last play
-        # env.mileage has the mileage value from the last play
-        print(env.score)
-        # print(env.mileage)
-        
-        # JUST A LOOP TO EVAL TRAINING
-        total_score += env.score 
-        episode_count += 1 
-        
-        avg_score = total_score / episode_count
-        print(f"average score: {avg_score:.2f}")
-
-        if episode % 100 == 0 and episode != 0:  
-            total_score = 0  
-            episode_count = 0  
-
-        # JUST A LOOP TO EVAL TRAINING
+        for episode in range(episodes):
+            # Reset counters for each episode
+            agent.last_pipe_passed = 0
+            agent.last_action_was_jump = 0
             
-        # store the best model based on your judgement
-        agent.save_model(path='my_model6-best.ckpt')
+            env.play(player=agent)
+            
+            # Track performance
+            total_score += env.score
+            episode_count += 1
+            last_10_scores.append(env.score)
+            
+            print(f"Episode {episode+1}, Score: {env.score}, Epsilon: {agent.epsilon:.4f}, Recent Avg: {sum(last_10_scores)/len(last_10_scores):.2f}")
+            
+            if episode_count % 100 == 0:
+                avg_score = total_score / episode_count
+                print(f"Last 100 episodes average score: {avg_score:.2f}")
+                
+                # Save model if it's performing better
+                if avg_score > best_average:
+                    best_average = avg_score
+                    agent.save_model(path='my_model.ckpt')
+                    print(f"New best model saved with average score: {best_average:.2f}")
+                
+                total_score = 0
+                episode_count = 0
+            
+            # Periodically update target network
+            if episode % 50 == 0:  # Update more frequently
+                MyAgent.update_network_model(agent.network2, agent.network)
+                print("Target network updated")
+                
+            # Save checkpoint models periodically
+            if episode % 1000 == 0 and episode > 0:
+                agent.save_model(path=f'checkpoint_model_{episode}.ckpt')
+                print(f"Checkpoint model saved at episode {episode}")
 
-        # you'd want to clear the memory after one or a few episodes
-        if episode % 5000 == 0:
-            agent.storage.clear()
-        # you'd want to update the fixed Q-target network (Q_f) with Q's model parameter after one or a few episodes
-        if episode % 200 == 0:
-            agent.update_network_model(agent.network2, agent.network)
+    else:  # Evaluation mode
+        # Evaluation code
+        env = FlappyBirdEnv(config_file_path='config.yml', show_screen=True, level=args.level)
+        agent = MyAgent(show_screen=True, load_model_path='my_model.ckpt', mode='eval')
 
-    # the below resembles how we evaluate your agent
-    env2 = FlappyBirdEnv(config_file_path='config.yml', show_screen=False, level=args.level)
-    agent2 = MyAgent(show_screen=False, load_model_path='my_model6-best.ckpt', mode='eval')
+        episodes = 10
+        scores = []
+        
+        for episode in range(episodes):
+            env.play(player=agent)
+            scores.append(env.score)
+            print(f"Evaluation episode {episode+1}, Score: {env.score}")
 
-    episodes = 10
-    scores = list()
-    for episode in range(episodes):
-        env2.play(player=agent2)
-        scores.append(env2.score)
-
-    print('mine average score', np.mean(scores))
-    print(np.max(scores))
-    print(np.mean(scores))
+        print(f'Average score: {np.mean(scores):.2f}')
+        print(f'Max score: {np.max(scores)}')
+        print(f'Min score: {np.min(scores)}')
